@@ -1,5 +1,5 @@
 # Multi-Agent-PPO-on-SMAC
-This repo works with python=3.11
+This repo works with python=3.11,
 Implementations of IPPO and MAPPO on SMAC, the multi-agent StarCraft environment. What we implemented is a simplified version, without complex tricks. This repository is based on https://github.com/starry-sky6688/StarCraft. 
 
 ## Corresponding Papers
@@ -13,8 +13,9 @@ Implementations of IPPO and MAPPO on SMAC, the multi-agent StarCraft environment
 + [pysc2](https://github.com/deepmind/pysc2)
 
 ## Run an experiment
-	python3 main.py --map=3m --alg=ippo
-	
+Check out the [PIPELINE](https://colab.research.google.com/drive/1nmFmerjXRA_JYw5jyEmBrk8PP2Us_A9s)
+- Quick start:
+`python3 main.py --map=3m --alg=ippo`
 ## Saving models and results
 You can set the `model_dir` and `result_dir`, which can be found in `./common/arguments.py`. By default, all of the results and models are saved in `./model`.
 
