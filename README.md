@@ -1,5 +1,5 @@
 # Multi-Agent-PPO-on-SMAC
-This repo work on 
+This repo works with python=3.11
 Implementations of IPPO and MAPPO on SMAC, the multi-agent StarCraft environment. What we implemented is a simplified version, without complex tricks. This repository is based on https://github.com/starry-sky6688/StarCraft. 
 
 ## Corresponding Papers
