@@ -12,7 +12,7 @@ export SC2PATH="$HOME/StarCraftII"
 echo 'SC2PATH is set to '$SC2PATH
 if [ ! -d $SC2PATH ]; then
         echo 'StarCraftII is not installed. Installing now ...';
-        wget http://blzdistsc2-a.akamaihd.net/Linux/SC2.4.10.zip
+        wget https://github.com/oxwhirl/smac/releases/download/v0.1-beta1/SMAC_Maps.zip
         unzip -P iagreetotheeula SC2.4.10.zip
 else
         echo 'StarCraftII is already installed.'
