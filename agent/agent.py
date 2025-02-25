@@ -20,7 +20,7 @@ class Agents:
         inputs = obs.copy()
         avail_actions_ind = np.nonzero(avail_actions)[0]
         agent_id = np.zeros(self.n_agents)
-        agent_id[agent_num] = 1.
+        agent_id[agent_num] = 1.0
         if self.args.last_action:
             inputs = np.hstack((inputs, last_action))
         if self.args.reuse_network:
@@ -58,9 +58,9 @@ class Agents:
 
     def train(self, batch, train_step=0, time_steps=0, epsilon=None):
         max_episode_len = self._get_max_episode_len(batch)
-
         for key in batch.keys():
             batch[key] = batch[key][:, :max_episode_len]
-        self.policy.learn(batch, max_episode_len, train_step, time_steps)
+        loss = self.policy.learn(batch, max_episode_len, train_step, time_steps)
         if train_step > 0 and train_step % self.args.save_cycle == 0:
             self.policy.save_model(train_step)
+        return loss

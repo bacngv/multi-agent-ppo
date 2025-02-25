@@ -70,7 +70,7 @@ class MAPPO:
         # input_shape += self.n_actions * self.n_agents * 2  # 54
         return input_shape
 
-    def learn(self, batch, max_episode_len, train_step,time_steps=0):
+    def learn(self, batch, max_episode_len, train_step, time_steps=0):
         episode_num = batch['o'].shape[0]
         self.init_hidden(episode_num)
         for key in batch.keys():
@@ -101,6 +101,9 @@ class MAPPO:
         old_log_pi_taken = old_dist.log_prob(u.squeeze(dim=-1))
         old_log_pi_taken[mask == 0] = 0.0
 
+        # save loss per epoch
+        loss_list = []
+
         for _ in range(self.args.ppo_n_epochs):
             self.init_hidden(episode_num)
 
@@ -115,16 +118,15 @@ class MAPPO:
             prev_value = 0.0
             prev_advantage = 0.0
             for transition_idx in reversed(range(max_episode_len)):
-                returns[:,transition_idx] = r[:,transition_idx] + self.args.gamma * prev_return * (1-terminated[:,transition_idx]) * mask[:, transition_idx]
-                deltas[:,transition_idx] = r[:,transition_idx] + self.args.gamma * prev_value * (1-terminated[:,transition_idx]) * mask[:, transition_idx]\
-                                           - values[:, transition_idx]
-                advantages[:,transition_idx] = deltas[:,transition_idx] + self.args.gamma * self.args.lamda * prev_advantage * (1-terminated[:,transition_idx]) * mask[:, transition_idx]
+                returns[:, transition_idx] = r[:, transition_idx] + self.args.gamma * prev_return * (1 - terminated[:, transition_idx]) * mask[:, transition_idx]
+                deltas[:, transition_idx] = r[:, transition_idx] + self.args.gamma * prev_value * (1 - terminated[:, transition_idx]) * mask[:, transition_idx] - values[:, transition_idx]
+                advantages[:, transition_idx] = deltas[:, transition_idx] + self.args.gamma * self.args.lamda * prev_advantage * (1 - terminated[:, transition_idx]) * mask[:, transition_idx]
 
-                prev_return = returns[:,transition_idx]
-                prev_value = values[:,transition_idx]
-                prev_advantage = advantages[:,transition_idx]
+                prev_return = returns[:, transition_idx]
+                prev_value = values[:, transition_idx]
+                prev_advantage = advantages[:, transition_idx]
 
-            advantages = (advantages - advantages.mean()) / ( advantages.std() + 1e-8)
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             advantages = advantages.detach()
 
             if self.args.use_gpu:
@@ -144,7 +146,6 @@ class MAPPO:
             entropy[mask == 0] = 0.0
 
             policy_loss = torch.min(surr1, surr2) + self.args.entropy_coeff * entropy
-
             policy_loss = - (policy_loss * mask).sum() / mask.sum()
 
             error_clip = torch.clamp(values - old_values.detach(), -self.args.clip_param, self.args.clip_param) + old_values.detach() - returns
@@ -155,10 +156,19 @@ class MAPPO:
 
             loss = policy_loss + value_loss
 
+            loss_list.append(loss.item())
+
             self.ac_optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.ac_parameters, self.args.grad_norm_clip)
             self.ac_optimizer.step()
+
+        # avg loss
+        avg_loss = sum(loss_list) / len(loss_list)
+        print("Training Step {}: Average Loss = {:.6f}".format(train_step, avg_loss))
+        
+        return avg_loss
+
 
         # if train_step > 0 and train_step % self.args.target_update_cycle == 0:
         #     self.target_critic.load_state_dict(self.eval_critic.state_dict())
