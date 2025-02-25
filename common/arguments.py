@@ -21,7 +21,7 @@ def get_common_args():
     parser.add_argument('--gamma', type=float, default=0.99, help='the discount factor')
     parser.add_argument('--optimizer', type=str, default="Adam", help='the optimizer')
     parser.add_argument('--model_dir', type=str, default='./model', help='the model directory of the policy')
-    parser.add_argument('--result_dir', type=str, default='./model', help='the result directory of the policy')
+    parser.add_argument('--result_dir', type=str, default='./results', help='the result directory of the policy')
     parser.add_argument('--learn', type=bool, default=True, help='whether to train the model')
     parser.add_argument('--threshold', type=int, default=19, help='the threshold to judge whether win')
     parser.add_argument('--evaluate_cycle', type=int, default=10000, help='how often to evaluate the model')

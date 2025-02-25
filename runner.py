@@ -134,6 +134,3 @@ class Runner:
             'loss': self.loss_history
         })
         loss_df.to_csv(loss_csv_path, index=False)
-
-        print(f"Saved loss plot at {loss_plot_path}")
-        print(f"Saved loss CSV at {loss_csv_path}")
