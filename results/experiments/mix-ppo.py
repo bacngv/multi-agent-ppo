@@ -1,24 +1,16 @@
+"""Modified MAPPO, designed in a value decomposition style. 
+This implementation improves the value loss component of the original MAPPO by calculating it using value decomposition that aggregates values through a mixing network. 
+This network is inspired by the concept of PPO. In the mixing network, I use the function y = log(1 + alpha * x) to stabilize the algorithm—this function behaves like a parabola so that when x is large, 
+the mixed value does not increase sharply.
 """
-Modified MAPPO Implementation with Value Decomposition using a Mixing Network (similar to QMIX)
-and KL Penalty in PPO updates.
-
-Changes compared to the original MAPPO algorithm:
-1. Integration of a value mixing network that decomposes the global value function by combining
-   individual agent value estimates using hypernetworks. This is inspired by the QMIX approach.
-2. Replacement of the standard PPO clipping mechanism with a KL penalty approach for the policy update.
-3. Use of TD(λ) for computing advantages and returns.
-4. Centralized critic that incorporates state, observation, and agent identity information.
-"""
-
 import torch
 import os
 import torch.nn as nn
 import torch.nn.functional as F
-from network.ppo_net import PPOActor
-from network.ppo_net import PPOCritic
+from network.ppo_net import PPOActor, PPOCritic
 from torch.distributions import Categorical
 
-# Mixing network for value decomposition (similar to QMIX)
+# Mixing network for value decomposition (similar to QMIX) - updated version
 class ValueMixingNetwork(nn.Module):
     def __init__(self, n_agents, state_dim, mixing_hidden_dim):
         super(ValueMixingNetwork, self).__init__()
@@ -45,16 +37,23 @@ class ValueMixingNetwork(nn.Module):
         Returns: global value (batch,)
         """
         batch_size = agent_values.size(0)
-        # First layer
+        # Layer 1:
         w1 = torch.abs(self.hyper_w_1(state)).view(batch_size, self.n_agents, self.mixing_hidden_dim)
         b1 = self.hyper_b_1(state).view(batch_size, 1, self.mixing_hidden_dim)
-        hidden = torch.bmm(agent_values.unsqueeze(1), w1) + b1  # (batch, 1, mixing_hidden_dim)
-        hidden = F.relu(hidden)
-        # Second layer
+        pre_activation = torch.bmm(agent_values.unsqueeze(1), w1) + b1  # (batch, 1, mixing_hidden_dim)
+        
+        # Apply the activation function log(1 + alpha * x)
+        # Ensure non-negative input:
+        activated = pre_activation.clamp(min=0)
+        alpha = 2.5  # The alpha parameter can be adjusted as needed
+        hidden = torch.log(1 + alpha * activated)
+        
+        # Layer 2:
         w2 = torch.abs(self.hyper_w_2(state)).view(batch_size, self.mixing_hidden_dim, 1)
         b2 = self.hyper_b_2(state).view(batch_size, 1, 1)
         y = torch.bmm(hidden, w2) + b2  # (batch, 1, 1)
         return y.view(batch_size)
+
 
 class MAPPO:
     def __init__(self, args):
@@ -73,7 +72,7 @@ class MAPPO:
 
         self.policy_rnn = PPOActor(actor_input_shape, args)
         self.eval_critic = PPOCritic(critic_input_shape, self.args)
-        # Initialize value mixer to combine individual agent values into a global value
+        # Initialize the mixing network for value decomposition
         self.value_mixer = ValueMixingNetwork(self.n_agents, self.state_shape, args.mixing_hidden_dim)
 
         if self.args.use_gpu:
@@ -82,7 +81,6 @@ class MAPPO:
             self.value_mixer.cuda()
 
         self.model_dir = os.path.join(args.model_dir, args.alg, args.map)
-
         self.ac_parameters = list(self.policy_rnn.parameters()) + \
                              list(self.eval_critic.parameters()) + \
                              list(self.value_mixer.parameters())
@@ -96,24 +94,20 @@ class MAPPO:
         self.eval_critic_hidden = None
 
     def _get_critic_input_shape(self):
-        # Start with the state dimension
-        input_shape = self.state_shape
-        # Add observation dimension
-        input_shape += self.obs_shape
-        # Add agent identity information
-        input_shape += self.n_agents
+        # state + obs + one-hot agent id
+        input_shape = self.state_shape + self.obs_shape + self.n_agents
         return input_shape
 
     def learn(self, batch, max_episode_len, train_step, time_steps=0):
         episode_num = batch['o'].shape[0]
         self.init_hidden(episode_num)
+        # Convert numpy arrays to tensors
         for key in batch.keys():
             if key == 'u':
                 batch[key] = torch.tensor(batch[key], dtype=torch.long)
             else:
                 batch[key] = torch.tensor(batch[key], dtype=torch.float32)
         u, r, avail_u, terminated, s = batch['u'], batch['r'], batch['avail_u'], batch['terminated'], batch['s']
-
         mask = (1 - batch["padded"].float())
 
         if self.args.use_gpu:
@@ -123,15 +117,12 @@ class MAPPO:
             terminated = terminated.cuda()
             s = s.cuda()
 
-        # Assume initial mask shape is (episode, time)
-        # Repeat along agent dimension -> (episode, time, n_agents)
+        # Expand mask, reward, and terminated to include agents
         mask = mask.repeat(1, 1, self.n_agents)
         r = r.repeat(1, 1, self.n_agents)
         terminated = terminated.repeat(1, 1, self.n_agents)
 
-        # Get old critic values and policy action probabilities (for KL penalty computation)
-        old_values, _ = self._get_values(batch, max_episode_len)
-        old_values = old_values.squeeze(dim=-1)
+        # Compute old action probabilities and detach to avoid gradient flow
         old_action_prob = self._get_action_prob(batch, max_episode_len).detach()
         old_dist = Categorical(old_action_prob)
         old_log_pi_taken = old_dist.log_prob(u.squeeze(dim=-1))
@@ -139,10 +130,9 @@ class MAPPO:
 
         loss_list = []
 
-        # Compute advantages and returns using TD(λ)
+        # Compute critic values and advantages
         values, _ = self._get_values(batch, max_episode_len)
         values = values.squeeze(dim=-1)
-
         returns = torch.zeros_like(r)
         deltas = torch.zeros_like(r)
         advantages = torch.zeros_like(r)
@@ -165,53 +155,50 @@ class MAPPO:
         if self.args.use_gpu:
             advantages = advantages.cuda()
 
-        # Perform updates over several PPO epochs
+        # PPO update epochs
         for _ in range(self.args.ppo_n_epochs):
             self.init_hidden(episode_num)
-
-            # Compute agent-level critic values and combine them into a global value via the mixing network
+            # Recompute critic values
             values, _ = self._get_values(batch, max_episode_len)
             values = values.squeeze(dim=-1)
 
-            # Compute returns computed earlier (returns: shape (episode, time, n_agents))
-            # Since the reward is common, take the mean as the global target
-            returns_global = returns.mean(dim=2)
+            # Compute global returns using the mixing network (instead of a simple average)
+            global_returns = []
+            for t in range(max_episode_len):
+                agent_returns = returns[:, t, :]  # (episode, n_agents)
+                state_t = s[:, t, :]              # (episode, state_dim)
+                global_return = self.value_mixer(agent_returns, state_t)
+                global_returns.append(global_return)
+            global_returns = torch.stack(global_returns, dim=1)  # (episode, time)
 
-            # Compute global value at each timestep using the mixing network
+            # Compute global values using the mixing network from the critic values
             global_values = []
             for t in range(max_episode_len):
-                # Get individual agent values at timestep t: (episode, n_agents)
-                agent_vals = values[:, t, :]
-                # Get the corresponding state: (episode, state_dim)
-                state_t = s[:, t, :]
+                agent_vals = values[:, t, :]  # (episode, n_agents)
+                state_t = s[:, t, :]          # (episode, state_dim)
                 global_val = self.value_mixer(agent_vals, state_t)
                 global_values.append(global_val)
             global_values = torch.stack(global_values, dim=1)  # (episode, time)
 
-            # Use a single agent's mask since the mask is the same for all agents
             mask_single = mask[:, :, 0]
+            value_loss = 0.5 * (((global_values - global_returns) ** 2) * mask_single).sum() / mask_single.sum()
 
-            # Compute value loss using MSE (without clipping)
-            value_loss = 0.5 * (((global_values - returns_global) ** 2) * mask_single).sum() / mask_single.sum()
-
-            # Compute new action probabilities from the policy
+            # Policy update: compute new action probabilities
             action_prob = self._get_action_prob(batch, max_episode_len)
             dist = Categorical(action_prob)
-            new_log_pi_taken = dist.log_prob(u.squeeze(dim=-1))
-            new_log_pi_taken[mask == 0] = 0.0
-            ratios = torch.exp(new_log_pi_taken - old_log_pi_taken.detach())
+            log_pi_taken = dist.log_prob(u.squeeze(dim=-1))
+            log_pi_taken[mask == 0] = 0.0
+            ratios = torch.exp(log_pi_taken - old_log_pi_taken.detach())
 
-            # Use KL penalty instead of clipping (PPO with KL penalty)
-            pg_loss = - (ratios * advantages * mask).sum() / mask.sum()
-            kl_div = torch.distributions.kl_divergence(old_dist, dist)
-            kl_div[mask == 0] = 0.0
-            kl_loss = self.args.kl_coeff * (kl_div * mask).sum() / mask.sum()
+            # Clipped PPO objective
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1.0 - self.args.clip_param, 1.0 + self.args.clip_param) * advantages
+            policy_loss = - (torch.min(surr1, surr2) * mask).sum() / mask.sum()
 
+            # Entropy bonus
             entropy = dist.entropy()
             entropy[mask == 0] = 0.0
-
-            # Entropy bonus to encourage exploration (subtracted since we minimize loss)
-            policy_loss = pg_loss + kl_loss - self.args.entropy_coeff * (entropy * mask).sum() / mask.sum()
+            policy_loss = policy_loss - self.args.entropy_coeff * (entropy * mask).sum() / mask.sum()
 
             loss = policy_loss + value_loss
             loss_list.append(loss.item())
@@ -226,8 +213,10 @@ class MAPPO:
         return avg_loss
 
     def _get_critic_inputs(self, batch, transition_idx, max_episode_len):
-        obs, obs_next, s, s_next = batch['o'][:, transition_idx], batch['o_next'][:, transition_idx],\
-                                   batch['s'][:, transition_idx], batch['s_next'][:, transition_idx]
+        obs = batch['o'][:, transition_idx]
+        obs_next = batch['o_next'][:, transition_idx]
+        s = batch['s'][:, transition_idx]
+        s_next = batch['s_next'][:, transition_idx]
         s = s.unsqueeze(1).expand(-1, self.n_agents, -1)
         s_next = s_next.unsqueeze(1).expand(-1, self.n_agents, -1)
         episode_num = obs.shape[0]
@@ -235,7 +224,7 @@ class MAPPO:
         inputs.append(s)
         inputs_next.append(s_next)
         inputs.append(obs)
-        inputs_next.append(batch['o_next'][:, transition_idx])
+        inputs_next.append(obs_next)
         inputs.append(torch.eye(self.n_agents).unsqueeze(0).expand(episode_num, -1, -1))
         inputs_next.append(torch.eye(self.n_agents).unsqueeze(0).expand(episode_num, -1, -1))
         inputs = torch.cat([x.reshape(episode_num * self.n_agents, -1) for x in inputs], dim=1)
