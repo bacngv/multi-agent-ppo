@@ -1,0 +1,5 @@
+torch
+matplotlib
+matplotlib-inline
+ipython
+git+https://github.com/oxwhirl/smac.git
