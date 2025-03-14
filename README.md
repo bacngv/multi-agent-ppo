@@ -14,6 +14,9 @@ Implementations of IPPO and MAPPO on SMAC, the multi-agent StarCraft environment
 ### Loss Experiment
 ![Loss Experiment](results\experiment_loss.png)
 
+### Shapley rewards Experiment
+![Loss Experiment](results\experiment\3m\shapley_plot_0.png)
+
 ### Comparison of 3 Models: IPPO, MAPPO, and Experiment
 ![Comparison of 3 Models](results\results_comparison.png)
 
