@@ -7,6 +7,16 @@ Implementations of IPPO and MAPPO on SMAC, the multi-agent StarCraft environment
 
 [MAPPO: Benchmarking Multi-agent Deep Reinforcement Learning Algorithms](https://arxiv.org/abs/2006.07869)
 
+## Results
+### Loss Comparison between IPPO and MAPPO
+![Loss Comparison between IPPO and MAPPO](results\ippo_mappo_loss.png)
+
+### Loss Experiment
+![Loss Experiment](results\experiment_loss.png)
+
+### Comparison of 3 Models: IPPO, MAPPO, and Experiment
+![Comparison of 3 Models](results\results_comparison.png)
+
 ## Requirements
 + pytorch
 + [StarCraftII (SMAC)](https://github.com/oxwhirl/smac)
